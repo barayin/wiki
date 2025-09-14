@@ -1,7 +1,7 @@
 # SPECS.md — org.barayin.wiki TiddlyWiki × atproto Hosting System
 
 ## Overview
-This specification defines the complete architecture, schemas, editorial authority, moderation, federation, and IPFS integration for hosting TiddlyWiki content on the atproto network under the namespace `org.barayin.wiki`.
+This specification defines the complete architecture, schemas, editorial authority, moderation, federation, and IPFS integration for hosting TiddlyWiki content on the atproto network under the namespace `org.barayin.wiki`. '?' is used in this document to represent an optional field.
 
 ---
 
