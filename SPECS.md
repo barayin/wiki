@@ -1,34 +1,48 @@
 # SPECS.md — org.barayin.wiki TiddlyWiki × atproto Hosting System
 
 ## Overview
-This document specifies the architecture, schemas, protocols, and implementation details for hosting TiddlyWiki content on the atproto network under the namespace `org.barayin.wiki`.
+This specification defines the complete architecture, schemas, editorial authority, moderation, federation, and IPFS integration for hosting TiddlyWiki content on the atproto network under the namespace `org.barayin.wiki`.
 
 ---
 
 ## Namespace & Collections
 - **Root namespace:** `org.barayin`
 - **Wiki service namespace:** `org.barayin.wiki`
-- **Collections:**
-  - `org.barayin.wiki.wiki` — metadata record for a wiki
-  - `org.barayin.wiki.tiddler` — per-tiddler record
-  - `org.barayin.wiki.index` — title→rkey index per wiki
-  - `org.barayin.wiki.tiddlerHistory` — revision log per tiddler
+
+### Collections
+- `org.barayin.wiki.wiki` — wiki metadata
+- `org.barayin.wiki.tiddler` — per-tiddler content
+- `org.barayin.wiki.index` — title→rkey index per wiki
+- `org.barayin.wiki.tiddlerHistory` — revision log per tiddler
+- `org.barayin.wiki.roles` — per-wiki role bindings
+- `org.barayin.wiki.editorialPolicy` — default editorial authority for a wiki
+- `org.barayin.wiki.publishTip` — authority-selected published revision for a tiddler
+- `org.barayin.wiki.moderation.report` — abuse reports
+- `org.barayin.wiki.moderation.action` — authority actions
+- `org.barayin.wiki.changeProposal` — collaborative change proposals
+
+### AppView Queries
+- `org.barayin.wiki.tiddler.list`
+- `org.barayin.wiki.tiddler.history`
+- `org.barayin.wiki.moderation.state`
+- `org.barayin.wiki.search`
+- `org.barayin.wiki.backlinks`
 
 ---
 
-## Schema Definitions
+## Core Data Schemas
 
 ### `org.barayin.wiki.wiki`
-Metadata for a single wiki.
 ```json
 {
-  "slug": "string (record-key)",
+  "slug": "string",
   "name": "string",
   "about": "string?",
   "homeTitle": "string?",
   "theme": "string?",
   "visibility": "public|encrypted",
   "tiddlerCount": "int",
+  "editorialPolicy": "at-uri?",
   "createdAt": "datetime",
   "updatedAt": "datetime"
 }
@@ -36,14 +50,12 @@ Metadata for a single wiki.
 
 ### `org.barayin.wiki.tiddler`
 
-A single tiddler record.
-
 ```json
 {
-  "wiki": "at-uri (org.barayin.wiki.wiki)",
+  "wiki": "at-uri",
   "title": "string",
-  "type": "string (MIME)",
-  "text": "string (≤128 KB) ?",
+  "type": "string",
+  "text": "string?",
   "attachment": "blob?",
   "tags": "string[]",
   "fields": "array<kv>",
@@ -54,216 +66,311 @@ A single tiddler record.
 
 ### `org.barayin.wiki.index`
 
-Title→rkey index for a wiki.
-
 ```json
 {
   "wiki": "at-uri",
   "updatedAt": "datetime",
   "version": "int",
   "items": [
-    {
-      "title": "string",
-      "rkey": "string",
-      "aliases": "string[]"
-    }
+    { "title": "string", "rkey": "string", "aliases": "string[]" }
   ]
 }
 ```
 
 ### `org.barayin.wiki.tiddlerHistory`
 
-Revision log for a tiddler.
-
 ```json
 {
   "wiki": "at-uri",
-  "tiddler": "at-uri (org.barayin.wiki.tiddler)",
-  "truncated": "boolean",
+  "tiddler": "at-uri",
+  "truncated": "boolean?",
   "items": [
-    {
-      "cid": "cid-link",
-      "modifiedAt": "datetime",
-      "note": "string?"
-    }
+    { "cid": "cid-link", "modifiedAt": "datetime", "note": "string?" }
   ]
 }
 ```
 
-### Shared Defs
+### `org.barayin.wiki.roles`
 
-* **kv:** `{ name: string, value: string }`
-* **skinnyTiddler:** `{ title, type, tags[], modifiedAt }`
+```json
+{
+  "wiki": "at-uri",
+  "updatedAt": "datetime",
+  "roles": [
+    { "role": "owner|editor|moderator|viewer", "did": "string" }
+  ]
+}
+```
 
----
+### `org.barayin.wiki.editorialPolicy`
 
-## AppView Endpoints
+```json
+{
+  "wiki": "at-uri",
+  "authority": {
+    "mode": "self|delegated|community",
+    "authorityDid": "string?",
+    "labelers": ["string"]?,
+    "notes": "string?"
+  },
+  "defaults": {
+    "autoPublishLatest": "boolean",
+    "allowUserAuthorityOverride": "boolean"
+  },
+  "createdAt": "datetime",
+  "updatedAt": "datetime"
+}
+```
 
-### `org.barayin.wiki.tiddler.list`
+### `org.barayin.wiki.publishTip`
 
-List skinny tiddlers for a wiki.
+```json
+{
+  "wiki": "at-uri",
+  "tiddler": "at-uri",
+  "target": { "uri": "at-uri", "cid": "cid-link" },
+  "reason": "string?",
+  "expiresAt": "datetime?",
+  "actor": "did",
+  "createdAt": "datetime",
+  "updatedAt": "datetime"
+}
+```
 
-* Params: `{ wiki, limit?, cursor?, since?, tag?, titlePrefix? }`
-* Returns: `{ tiddlers[], cursor? }`
+### `org.barayin.wiki.moderation.report`
 
-### `org.barayin.wiki.tiddler.history`
+```json
+{
+  "target": "at-uri",
+  "reason": "string",
+  "category": "spam|abuse|copyright|malware|nsfw|other",
+  "reporter": "did",
+  "createdAt": "datetime",
+  "context": "string?"
+}
+```
 
-Get revision history for a tiddler.
+### `org.barayin.wiki.moderation.action`
 
-* Params: `{ wiki, rkey, limit?, cursor? }`
-* Returns: `{ items[], cursor? }`
+```json
+{
+  "target": "at-uri|did|wiki-at-uri",
+  "scope": "record|wiki|actor",
+  "action": "hide|shadowHide|label|freeze|publishTip|unpublish|ban|unban",
+  "labels": ["string"]?,
+  "publishTip": { "uri": "at-uri", "cid": "cid-link" }?,
+  "duration": "string?",
+  "reason": "string?",
+  "actor": "did",
+  "createdAt": "datetime"
+}
+```
+
+### `org.barayin.wiki.changeProposal`
+
+```json
+{
+  "wiki": "at-uri",
+  "title": "string",
+  "proposer": "did",
+  "changes": [
+    {
+      "type": "edit|create|delete|rename",
+      "tiddler": "at-uri?",
+      "rkey": "string?",
+      "from": { "uri": "at-uri", "cid": "cid-link" }?,
+      "to": { "title": "string?", "type": "string?", "text": "string?", "attachment": "blob?" }?
+    }
+  ],
+  "note": "string?",
+  "createdAt": "datetime",
+  "status": "open|accepted|rejected|merged",
+  "decider": "did?"
+}
+```
 
 ---
 
 ## Identifiers & Linking
 
-* **Stable rkeys:** Derived from `wikiSlug:title-slug-HHHHHH` (title slug + 6-char base32 hash).
-* **Linking:**
-
-  * AT-URI without `cid` → always latest version.
-  * AT-URI + `cid` → pinned version (strong reference).
-* **Intra-wiki links:** Resolve `[[Title]]` via `index` table → rkey → fetch latest record.
-
----
-
-## Revision Model
-
-* Every edit replaces the record with CAS (`swapRecord`).
-* Previous CIDs appended to `tiddlerHistory`.
-* AppView provides history queries and diff support.
+* **rkeys:** `<wikiSlug>:<slug(title)>-<BASE32_6HASH>` ≤200 chars.
+* **Latest:** `at://<did>/org.barayin.wiki.tiddler/<rkey>`
+* **Pinned:** `{ uri, cid }`
+* **Published view:** resolve via `publishTip` per authority.
+* **Intra-wiki links:** use `index` to resolve title → rkey → latest/published.
 
 ---
 
-## Blob Handling
+## Editorial Authority
 
-* Inline text ≤128 KB stays in `text`.
-* Larger/binary content → `attachment` blob with `uploadBlob`.
-* AppView generates thumbnails, strips metadata.
+### Models
 
----
+* **Self:** wiki owner is authority.
+* **Delegated:** explicit DID as authority.
+* **Community:** labeler sets or multisig.
 
-## Privacy Modes
+### User Selection
 
-* **public:** records visible to the network.
-* **encrypted:** fields and blobs encrypted client-side with per-wiki symmetric key.
+* Clients may override authority if allowed.
+* Authority discovery via DID doc service entry `atproto:appview`.
 
----
+### Publish Control
 
-## SyncAdaptor (TiddlyWiki Plugin)
-
-### Responsibilities
-
-* `getSkinnyTiddlers` → call AppView `tiddler.list`.
-* `loadTiddler` → fetch record via `getRecord`.
-* `saveTiddler` → `putRecord` or `createRecord` with CAS.
-* `deleteTiddler` → `deleteRecord`.
-* Title→rkey cache built via `index` or scanning.
-
-### Fields
-
-* `revision`: last known CID (for CAS).
-* `_attachmentBytes`, `_attachmentMime`: temporary fields for uploads.
+* **Soft revert:** set `publishTip` to older revision.
+* **Hard revert:** create new record with old content.
+* **Freeze:** authority prevents new published tips.
 
 ---
 
-## Server Components
+## Moderation
 
-### PDS
+### Reports
 
-* Stores repo per user (DID).
-* Validates records against lexicons.
-* Exposes XRPC for `com.atproto.repo.*`.
-* Emits firehose of commits.
+Anyone may create `moderation.report`.
 
-### AppView
+### Actions
 
-* Subscribes to firehose.
-* Indexes tiddlers into Postgres/SQLite.
-* Implements custom queries (`list`, `history`).
-* Maintains backlinks, search, and title index.
+Authorities create `moderation.action`.
+Precedence: `ban > hide/shadowHide > freeze > publishTip > autoPublish`.
+
+### Effective State
+
+Returned by `moderation.state` query:
+
+```json
+{
+  "published": { "uri": "at-uri", "cid": "cid-link" }?,
+  "visibility": "visible|hidden|shadowHidden",
+  "labels": ["string"],
+  "frozen": "boolean"
+}
+```
+
+### Appeals
+
+Represented as `report` with category `"appeal"`.
 
 ---
 
-## Federation
+## Change Proposals
 
-* Users control their own DID repos.
-* AT-URIs resolve globally.
-* AppViews federate content via firehose.
-* Moderation handled at AppView layer.
+* Contributors propose edits via `changeProposal`.
+* Owners/editors merge, creating standard tiddler records.
+* Status transitions: `open → accepted|rejected|merged`.
 
 ---
 
-## IPFS Integration (Optional)
+## AppView Implementation
+
+### Tables
+
+* `tiddlers`, `tiddler_history`, `publish_tips`, `mod_actions`, `reports`, `title_index`.
+
+### Queries
+
+* **list:** skinny tiddlers, sorted `modifiedAt DESC`.
+* **history:** full revision chain.
+* **moderation.state:** effective publish + visibility per authority.
+* **search:** tokenized full-text over title, text, tags.
+* **backlinks:** link/transclusion graph from parsing wikitext.
+
+### Pagination
+
+* Cursor-based, opaque string.
+* Max 100 per page.
+
+---
+
+## Encryption (encrypted visibility)
+
+* **Algo:** AES-256-GCM, random 96-bit IV.
+* **Key derivation:** Argon2id from passphrase; key-wrap for collaborators.
+* **Fields:** store `{ alg, iv, salt, tag }` in record.
+* **Blobs:** ciphertext stored, decrypted client-side.
+
+---
+
+## Blobs
+
+* Inline text ≤128 KB; else `attachment`.
+* Allowed MIME: text/*, image/*, video/\*, application/pdf, application/json.
+* Thumbnails: generated at AppView for image/video.
+* Size limit: 50 MB per blob.
+* Deref failure: retry/backoff, mark with label.
+
+---
+
+## IPFS Integration
 
 ### Commits
 
-* Export repo deltas as CAR files.
-* Import to IPFS (`ipfs dag import`).
-* Pin commits via IPFS Cluster.
+* Mirror repo commits as CAR files.
+* Import into IPFS with `ipfs dag import`.
+* Pin via IPFS Cluster (replication factor configurable).
 
 ### Blobs
 
-* On upload, push bytes to IPFS (`/api/v0/add`).
-* Store returned CID in blob pointer.
-* Serve blobs from PDS or IPFS gateway.
-
-### Benefits
-
-* Deduplication across repos.
-* Long-term archival and pinning.
-* Interop with IPFS tooling (CAR, DAG-CBOR).
+* Upload to IPFS via Kubo RPC (`/api/v0/add`).
+* Store returned CID in PDS blob pointer.
+* Serve via PDS or IPFS gateway.
 
 ---
 
-## Deployment Model
+## Deployment
 
-### Minimal (dev)
+### Minimal
 
-* Single-host PDS + Postgres + Caddy TLS.
-* SQLite AppView for `list` + `history`.
-* IPFS node optional.
+* Single-host PDS, Postgres/SQLite AppView, optional IPFS node.
 
 ### Production
 
 * Multi-tenant PDS cluster.
-* Separate AppView cluster for indexing/search.
-* IPFS pinning cluster for redundancy.
-* Gateway (`wiki.barayin.org/@handle/<wiki>/<title>`).
+* Dedicated AppView cluster.
+* IPFS pinning cluster.
+* Gateway routes:
+
+  * `/@handle/<wiki>/<title>`
+  * `?cid=` for pinned version
+  * `?authority=<did>` for authority view
 
 ---
 
 ## Backup & Restore
 
-* Scheduled CAR exports of repos.
-* Mirror blobs in object storage or IPFS.
-* One-click restore into a fresh PDS.
+* Nightly CAR exports.
+* Blob mirrors in IPFS or object store.
+* One-click restore into PDS.
 
 ---
 
 ## Developer Experience
 
-* Lexicons published in `org.barayin.wiki`.
+* Lexicons published under `org.barayin.wiki`.
 * TypeScript SDK generated via `lex-cli`.
-* Helpers:
-
-  * `rkey.ts`: slug/hash generator.
-  * `cas.ts`: CAS wrappers.
-  * `importer.ts`: resumable importer.
-  * `indexer-client.ts`: AppView client.
+* Helpers: `rkey.ts`, `cas.ts`, `importer.ts`, `indexer-client.ts`.
 
 ---
 
-## Moderation & Policy
+## Observability & Quotas
 
-* Per-wiki license string (default CC-BY-4.0).
-* Abuse reporting and takedown workflow at AppView.
-* Access controls via `visibility` and encrypted mode.
+* Metrics: repo ops, firehose lag, query latency.
+* Rate limits: per-DID, with exponential backoff.
+* Quotas: max tiddler count per wiki, max blob size.
 
 ---
 
-## Accessibility & Internationalization
+## Security, Safety, A11y, i18n
 
-* Alt text required for images.
-* Unicode-safe slugs.
-* Localizable UI strings.
-* Bidirectional text support.
+* HTML sanitization, CSP on gateway.
+* Alt-text required for images.
+* Unicode-safe slugs, bidi-safe rendering.
+* Localized UI strings.
+* Strong CORS isolation on blob endpoints.
+
+---
+
+## Non-Goals
+
+* CRDTs, real-time collaborative editing.
+* Server-side plugin execution.
+* Binary diff storage.
